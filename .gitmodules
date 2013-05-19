@@ -1,0 +1,3 @@
+[submodule "redmine_backlogs"]
+	path = redmine_backlogs
+	url = git@github.com:tashua314/redmine_backlogs.git
