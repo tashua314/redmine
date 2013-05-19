@@ -1,0 +1,40 @@
+Migrating redmine_backlogs (Redmine Backlogs)...
+==  AddReleasesPlannedVelocity: migrating =====================================
+-- add_column(:releases, :planned_velocity, :float)
+   -> 0.0244s
+==  AddReleasesPlannedVelocity: migrated (0.0246s) ============================
+
+==  AddReleaseRelationshipToIssues: migrating =================================
+-- add_column(:issues, :release_relationship, :string, {:default=>"auto", :null=>false})
+   -> 0.0364s
+==  AddReleaseRelationshipToIssues: migrated (0.0365s) ========================
+
+==  DropReleaseBurndownDays: migrating ========================================
+-- drop_table(:release_burndown_days)
+   -> 0.0295s
+-- remove_column(:releases, :initial_story_points)
+   -> 0.0113s
+==  DropReleaseBurndownDays: migrated (0.0419s) ===============================
+
+==  AddReleasesIndexes: migrating =============================================
+-- add_index(:issues, :release_id)
+   -> 0.0991s
+-- add_index(:issues, :release_relationship)
+   -> 0.0172s
+-- add_index(:releases, :project_id)
+   -> 0.0094s
+-- add_index(:releases, :status)
+   -> 0.0119s
+-- add_index(:releases, :release_start_date)
+   -> 0.0101s
+-- add_index(:releases, :release_end_date)
+   -> 0.0102s
+==  AddReleasesIndexes: migrated (0.1584s) ====================================
+
+==  AddIssuesRbcache: migrating ===============================================
+-- create_table(:rb_release_burndown_caches)
+   -> 0.0056s
+-- add_index(:rb_release_burndown_caches, :issue_id)
+   -> 0.0086s
+==  AddIssuesRbcache: migrated (0.0144s) ======================================
+
