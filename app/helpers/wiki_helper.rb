@@ -1,7 +1,7 @@
 # encoding: utf-8
 #
 # Redmine - project management software
-# Copyright (C) 2006-2013  Jean-Philippe Lang
+# Copyright (C) 2006-2014  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -33,6 +33,16 @@ module WikiHelper
       end
     end
     s
+  end
+
+  def wiki_page_wiki_options_for_select(page)
+    projects = Project.allowed_to(:rename_wiki_pages).joins(:wiki).preload(:wiki).to_a
+    projects << page.project unless projects.include?(page.project)
+
+    project_tree_options_for_select(projects, :selected => page.project) do |project|
+      wiki_id = project.wiki.try(:id)
+      {:value => wiki_id, :selected => wiki_id == page.wiki_id}
+    end
   end
 
   def wiki_page_breadcrumb(page)

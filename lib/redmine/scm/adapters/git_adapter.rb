@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2013  Jean-Philippe Lang
+# Copyright (C) 2006-2014  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -47,10 +47,7 @@ module Redmine
           end
 
           def scm_command_version
-            scm_version = scm_version_from_command_line.dup
-            if scm_version.respond_to?(:force_encoding)
-              scm_version.force_encoding('ASCII-8BIT')
-            end
+            scm_version = scm_version_from_command_line.dup.force_encoding('ASCII-8BIT')
             if m = scm_version.match(%r{\A(.*?)((\d+\.)+\d+)})
               m[2].scan(%r{\d+}).collect(&:to_i)
             end
@@ -145,10 +142,7 @@ module Redmine
                 type = $1
                 sha  = $2
                 size = $3
-                name = $4
-                if name.respond_to?(:force_encoding)
-                  name.force_encoding(@path_encoding)
-                end
+                name = $4.force_encoding(@path_encoding)
                 full_path = p.empty? ? name : "#{p}/#{name}"
                 n      = scm_iconv('UTF-8', @path_encoding, name)
                 full_p = scm_iconv('UTF-8', @path_encoding, full_path)
@@ -333,7 +327,7 @@ module Redmine
 
         def annotate(path, identifier=nil)
           identifier = 'HEAD' if identifier.blank?
-          cmd_args = %w|blame|
+          cmd_args = %w|blame --encoding=UTF-8|
           cmd_args << "-p" << identifier << "--" <<  scm_iconv(@path_encoding, 'UTF-8', path)
           blame = Annotate.new
           content = nil

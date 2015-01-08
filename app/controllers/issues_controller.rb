@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2013  Jean-Philippe Lang
+# Copyright (C) 2006-2014  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -24,7 +24,6 @@ class IssuesController < ApplicationController
   before_filter :find_project, :only => [:new, :create, :update_form]
   before_filter :authorize, :except => [:index]
   before_filter :find_optional_project, :only => [:index]
-  before_filter :check_for_default_issue_status, :only => [:new, :create]
   before_filter :build_new_issue_from_params, :only => [:new, :create, :update_form]
   accept_rss_auth :index, :show
   accept_api_auth :index, :show, :create, :update, :destroy
@@ -62,10 +61,14 @@ class IssuesController < ApplicationController
       case params[:format]
       when 'csv', 'pdf'
         @limit = Setting.issues_export_limit.to_i
+        if params[:columns] == 'all'
+          @query.column_names = @query.available_inline_columns.map(&:name)
+        end
       when 'atom'
         @limit = Setting.feeds_limit.to_i
       when 'xml', 'json'
         @offset, @limit = api_offset_and_limit
+        @query.column_names = %w(author)
       else
         @limit = per_page_option
       end
@@ -100,12 +103,16 @@ class IssuesController < ApplicationController
   end
 
   def show
-    @journals = @issue.journals.includes(:user, :details).reorder("#{Journal.table_name}.id ASC").all
+    @journals = @issue.journals.includes(:user, :details).
+                    references(:user, :details).
+                    reorder("#{Journal.table_name}.id ASC").to_a
     @journals.each_with_index {|j,i| j.indice = i+1}
     @journals.reject!(&:private_notes?) unless User.current.allowed_to?(:view_private_notes, @issue.project)
+    Journal.preload_journals_details_custom_fields(@journals)
+    @journals.select! {|journal| journal.notes? || journal.visible_details.any?}
     @journals.reverse! if User.current.wants_comments_in_reverse_order?
 
-    @changesets = @issue.changesets.visible.all
+    @changesets = @issue.changesets.visible.to_a
     @changesets.reverse! if User.current.wants_comments_in_reverse_order?
 
     @relations = @issue.relations.select {|r| r.other_issue(@issue) && r.other_issue(@issue).visible? }
@@ -178,11 +185,11 @@ class IssuesController < ApplicationController
     @issue.save_attachments(params[:attachments] || (params[:issue] && params[:issue][:uploads]))
     saved = false
     begin
-      saved = @issue.save_issue_with_child_records(params, @time_entry)
+      saved = save_issue_with_child_records
     rescue ActiveRecord::StaleObjectError
       @conflict = true
       if params[:last_journal_id]
-        @conflict_journals = @issue.journals_after(params[:last_journal_id]).all
+        @conflict_journals = @issue.journals_after(params[:last_journal_id]).to_a
         @conflict_journals.reject!(&:private_notes?) unless User.current.allowed_to?(:view_private_notes, @issue.project)
       end
     end
@@ -226,11 +233,12 @@ class IssuesController < ApplicationController
     target_projects ||= @projects
 
     if @copy
-      @available_statuses = [IssueStatus.default]
+      # Copied issues will get their default statuses
+      @available_statuses = []
     else
       @available_statuses = @issues.map(&:new_statuses_allowed_to).reduce(:&)
     end
-    @custom_fields = target_projects.map{|p|p.all_issue_custom_fields}.reduce(:&)
+    @custom_fields = target_projects.map{|p|p.all_issue_custom_fields.visible}.reduce(:&)
     @assignables = target_projects.map(&:assignable_users).reduce(:&)
     @trackers = target_projects.map(&:trackers).reduce(:&)
     @versions = target_projects.map {|p| p.shared_versions.open}.reduce(:&)
@@ -265,7 +273,8 @@ class IssuesController < ApplicationController
       if @copy
         issue = orig_issue.copy({},
           :attachments => params[:copy_attachments].present?,
-          :subtasks => params[:copy_subtasks].present?
+          :subtasks => params[:copy_subtasks].present?,
+          :link => link_copy?(params[:link_copy])
         )
       else
         issue = orig_issue
@@ -294,27 +303,28 @@ class IssuesController < ApplicationController
     else
       @saved_issues = @issues
       @unsaved_issues = unsaved_issues
-      @issues = Issue.visible.find_all_by_id(@unsaved_issues.map(&:id))
+      @issues = Issue.visible.where(:id => @unsaved_issues.map(&:id)).to_a
       bulk_edit
       render :action => 'bulk_edit'
     end
   end
 
   def destroy
-    @hours = TimeEntry.sum(:hours, :conditions => ['issue_id IN (?)', @issues]).to_f
+    @hours = TimeEntry.where(:issue_id => @issues.map(&:id)).sum(:hours).to_f
     if @hours > 0
       case params[:todo]
       when 'destroy'
         # nothing to do
       when 'nullify'
-        TimeEntry.update_all('issue_id = NULL', ['issue_id IN (?)', @issues])
+        TimeEntry.where(['issue_id IN (?)', @issues]).update_all('issue_id = NULL')
       when 'reassign'
         reassign_to = @project.issues.find_by_id(params[:reassign_to_id])
         if reassign_to.nil?
           flash.now[:error] = l(:error_issue_not_found_in_project)
           return
         else
-          TimeEntry.update_all("issue_id = #{reassign_to.id}", ['issue_id IN (?)', @issues])
+          TimeEntry.where(['issue_id IN (?)', @issues]).
+            update_all("issue_id = #{reassign_to.id}")
         end
       else
         # display the destroy form if it's a user request
@@ -367,7 +377,9 @@ class IssuesController < ApplicationController
   def update_issue_from_params
     @edit_allowed = User.current.allowed_to?(:edit_issues, @project)
     @time_entry = TimeEntry.new(:issue => @issue, :project => @issue.project)
-    @time_entry.attributes = params[:time_entry]
+    if params[:time_entry]
+      @time_entry.attributes = params[:time_entry]
+    end
 
     @issue.init_journal(User.current)
 
@@ -397,40 +409,45 @@ class IssuesController < ApplicationController
       @issue = Issue.new
       if params[:copy_from]
         begin
+          @issue.init_journal(User.current)
           @copy_from = Issue.visible.find(params[:copy_from])
+          @link_copy = link_copy?(params[:link_copy]) || request.get?
           @copy_attachments = params[:copy_attachments].present? || request.get?
           @copy_subtasks = params[:copy_subtasks].present? || request.get?
-          @issue.copy_from(@copy_from, :attachments => @copy_attachments, :subtasks => @copy_subtasks)
+          @issue.copy_from(@copy_from, :attachments => @copy_attachments, :subtasks => @copy_subtasks, :link => @link_copy)
         rescue ActiveRecord::RecordNotFound
           render_404
           return
         end
       end
       @issue.project = @project
+      @issue.author ||= User.current
+      @issue.start_date ||= Date.today if Setting.default_issue_start_date_to_creation_date?
     else
       @issue = @project.issues.visible.find(params[:id])
     end
 
-    @issue.project = @project
-    @issue.author ||= User.current
-    # Tracker must be set before custom field values
-    @issue.tracker ||= @project.trackers.find((params[:issue] && params[:issue][:tracker_id]) || params[:tracker_id] || :first)
+    if attrs = params[:issue].deep_dup
+      if params[:was_default_status] == attrs[:status_id]
+        attrs.delete(:status_id)
+      end
+      @issue.safe_attributes = attrs
+    end
+    @issue.tracker ||= @project.trackers.first
     if @issue.tracker.nil?
       render_error l(:error_no_tracker_in_project)
       return false
     end
-    @issue.start_date ||= Date.today if Setting.default_issue_start_date_to_creation_date?
-    @issue.safe_attributes = params[:issue]
-
-    @priorities = IssuePriority.active
-    @allowed_statuses = @issue.new_statuses_allowed_to(User.current, true)
-    @available_watchers = (@issue.project.users.sort + @issue.watcher_users).uniq
-  end
-
-  def check_for_default_issue_status
-    if IssueStatus.default.nil?
+    if @issue.status.nil?
       render_error l(:error_no_default_issue_status)
       return false
+    end
+
+    @priorities = IssuePriority.active
+    @allowed_statuses = @issue.new_statuses_allowed_to(User.current, @issue.new_record?)
+    @available_watchers = @issue.watcher_users
+    if @issue.project.users.count <= 20
+      @available_watchers = (@available_watchers + @issue.project.users.sort).uniq
     end
   end
 
@@ -448,5 +465,38 @@ class IssuesController < ApplicationController
       end
     end
     attributes
+  end
+
+  # Saves @issue and a time_entry from the parameters
+  def save_issue_with_child_records
+    Issue.transaction do
+      if params[:time_entry] && (params[:time_entry][:hours].present? || params[:time_entry][:comments].present?) && User.current.allowed_to?(:log_time, @issue.project)
+        time_entry = @time_entry || TimeEntry.new
+        time_entry.project = @issue.project
+        time_entry.issue = @issue
+        time_entry.user = User.current
+        time_entry.spent_on = User.current.today
+        time_entry.attributes = params[:time_entry]
+        @issue.time_entries << time_entry
+      end
+
+      call_hook(:controller_issues_edit_before_save, { :params => params, :issue => @issue, :time_entry => time_entry, :journal => @issue.current_journal})
+      if @issue.save
+        call_hook(:controller_issues_edit_after_save, { :params => params, :issue => @issue, :time_entry => time_entry, :journal => @issue.current_journal})
+      else
+        raise ActiveRecord::Rollback
+      end
+    end
+  end
+
+  def link_copy?(param)
+    case Setting.link_copied_issue
+    when 'yes'
+      true
+    when 'no'
+      false
+    when 'ask'
+      param == '1'
+    end
   end
 end

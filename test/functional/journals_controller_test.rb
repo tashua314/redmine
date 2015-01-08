@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2013  Jean-Philippe Lang
+# Copyright (C) 2006-2014  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -32,6 +32,11 @@ class JournalsControllerTest < ActionController::TestCase
     assert_equal 'application/atom+xml', @response.content_type
   end
 
+  def test_index_with_invalid_query_id
+    get :index, :project_id => 1, :query_id => 999
+    assert_response 404
+  end
+
   def test_index_should_return_privates_notes_with_permission_only
     journal = Journal.create!(:journalized => Issue.find(2), :notes => 'Privates notes', :private_notes => true, :user_id => 1)
     @request.session[:user_id] = 2
@@ -51,12 +56,17 @@ class JournalsControllerTest < ActionController::TestCase
     assert_response :success
     assert_template 'diff'
 
-    assert_tag 'span',
-      :attributes => {:class => 'diff_out'},
-      :content => /removed/
-    assert_tag 'span',
-      :attributes => {:class => 'diff_in'},
-      :content => /added/
+    assert_select 'span.diff_out', :text => /removed/
+    assert_select 'span.diff_in', :text => /added/
+  end
+
+  def test_diff_should_default_to_description_diff
+    get :diff, :id => 3
+    assert_response :success
+    assert_template 'diff'
+
+    assert_select 'span.diff_out', :text => /removed/
+    assert_select 'span.diff_in', :text => /added/
   end
 
   def test_reply_to_issue

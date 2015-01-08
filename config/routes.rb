@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2013  Jean-Philippe Lang
+# Copyright (C) 2006-2014  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -15,7 +15,7 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
-RedmineApp::Application.routes.draw do
+Rails.application.routes.draw do
   root :to => 'welcome#index', :as => 'home'
 
   match 'login', :to => 'account#login', :as => 'signin', :via => [:get, :post]
@@ -23,11 +23,12 @@ RedmineApp::Application.routes.draw do
   match 'account/register', :to => 'account#register', :via => [:get, :post], :as => 'register'
   match 'account/lost_password', :to => 'account#lost_password', :via => [:get, :post], :as => 'lost_password'
   match 'account/activate', :to => 'account#activate', :via => :get
+  get 'account/activation_email', :to => 'account#activation_email', :as => 'activation_email'
 
-  match '/news/preview', :controller => 'previews', :action => 'news', :as => 'preview_news', :via => [:get, :post, :put]
-  match '/issues/preview/new/:project_id', :to => 'previews#issue', :as => 'preview_new_issue', :via => [:get, :post, :put]
-  match '/issues/preview/edit/:id', :to => 'previews#issue', :as => 'preview_edit_issue', :via => [:get, :post, :put]
-  match '/issues/preview', :to => 'previews#issue', :as => 'preview_issue', :via => [:get, :post, :put]
+  match '/news/preview', :controller => 'previews', :action => 'news', :as => 'preview_news', :via => [:get, :post, :put, :patch]
+  match '/issues/preview/new/:project_id', :to => 'previews#issue', :as => 'preview_new_issue', :via => [:get, :post, :put, :patch]
+  match '/issues/preview/edit/:id', :to => 'previews#issue', :as => 'preview_edit_issue', :via => [:get, :post, :put, :patch]
+  match '/issues/preview', :to => 'previews#issue', :as => 'preview_issue', :via => [:get, :post, :put, :patch]
 
   match 'projects/:id/wiki', :to => 'wikis#edit', :via => :post
   match 'projects/:id/wiki/destroy', :to => 'wikis#destroy', :via => [:get, :post]
@@ -72,10 +73,9 @@ RedmineApp::Application.routes.draw do
   match 'my/remove_block', :controller => 'my', :action => 'remove_block', :via => :post
   match 'my/order_blocks', :controller => 'my', :action => 'order_blocks', :via => :post
 
-  resources :users
-  match 'users/:id/memberships/:membership_id', :to => 'users#edit_membership', :via => :put, :as => 'user_membership'
-  match 'users/:id/memberships/:membership_id', :to => 'users#destroy_membership', :via => :delete
-  match 'users/:id/memberships', :to => 'users#edit_membership', :via => :post, :as => 'user_memberships'
+  resources :users do
+    resources :memberships, :controller => 'principal_memberships'
+  end
 
   post 'watchers/watch', :to => 'watchers#watch', :as => 'watch'
   delete 'watchers/watch', :to => 'watchers#unwatch'
@@ -99,24 +99,20 @@ RedmineApp::Application.routes.draw do
       match 'copy', :via => [:get, :post]
     end
 
-    resources :memberships, :shallow => true, :controller => 'members', :only => [:index, :show, :new, :create, :update, :destroy] do
-      collection do
-        get 'autocomplete'
+    shallow do
+      resources :memberships, :controller => 'members', :only => [:index, :show, :new, :create, :update, :destroy] do
+        collection do
+          get 'autocomplete'
+        end
       end
     end
 
     resource :enumerations, :controller => 'project_enumerations', :only => [:update, :destroy]
 
     get 'issues/:copy_from/copy', :to => 'issues#new', :as => 'copy_issue'
-    resources :issues, :only => [:index, :new, :create] do
-      resources :time_entries, :controller => 'timelog' do
-        collection do
-          get 'report'
-        end
-      end
-    end
+    resources :issues, :only => [:index, :new, :create]
     # issue form update
-    match 'issues/update_form', :controller => 'issues', :action => 'update_form', :via => [:put, :post], :as => 'issue_form'
+    match 'issues/update_form', :controller => 'issues', :action => 'update_form', :via => [:put, :patch, :post], :as => 'issue_form'
 
     resources :files, :only => [:index, :new, :create]
 
@@ -130,19 +126,23 @@ RedmineApp::Application.routes.draw do
     get 'versions', :to => 'versions#index'
 
     resources :news, :except => [:show, :edit, :update, :destroy]
-    resources :time_entries, :controller => 'timelog' do
+    resources :time_entries, :controller => 'timelog', :except => [:show, :edit, :update, :destroy] do
       get 'report', :on => :collection
     end
     resources :queries, :only => [:new, :create]
-    resources :issue_categories, :shallow => true
+    shallow do
+      resources :issue_categories
+    end
     resources :documents, :except => [:show, :edit, :update, :destroy]
     resources :boards
-    resources :repositories, :shallow => true, :except => [:index, :show] do
-      member do
-        match 'committers', :via => [:get, :post]
+    shallow do
+      resources :repositories, :except => [:index, :show] do
+        member do
+          match 'committers', :via => [:get, :post]
+        end
       end
     end
-
+  
     match 'wiki/index', :controller => 'wiki', :action => 'index', :via => :get
     resources :wiki, :except => [:index, :new, :create], :as => 'wiki_page' do
       member do
@@ -150,7 +150,7 @@ RedmineApp::Application.routes.draw do
         post 'rename'
         get 'history'
         get 'diff'
-        match 'preview', :via => [:post, :put]
+        match 'preview', :via => [:post, :put, :patch]
         post 'protect'
         post 'add_attachment'
       end
@@ -171,12 +171,14 @@ RedmineApp::Application.routes.draw do
       match 'bulk_edit', :via => [:get, :post]
       post 'bulk_update'
     end
-    resources :time_entries, :controller => 'timelog' do
+    resources :time_entries, :controller => 'timelog', :except => [:show, :edit, :update, :destroy] do
       collection do
         get 'report'
       end
     end
-    resources :relations, :shallow => true, :controller => 'issue_relations', :only => [:index, :show, :create, :destroy]
+    shallow do
+      resources :relations, :controller => 'issue_relations', :only => [:index, :show, :create, :destroy]
+    end
   end
   match '/issues', :controller => 'issues', :action => 'destroy', :via => :delete
 
@@ -207,8 +209,7 @@ RedmineApp::Application.routes.draw do
   # TODO: delete /time_entries for bulk deletion
   match '/time_entries/destroy', :to => 'timelog#destroy', :via => :delete
 
-  get 'projects/:id/activity', :to => 'activities#index'
-  get 'projects/:id/activity.:format', :to => 'activities#index'
+  get 'projects/:id/activity', :to => 'activities#index', :as => :project_activity
   get 'activity', :to => 'activities#index'
 
   # repositories routes
@@ -265,17 +266,19 @@ RedmineApp::Application.routes.draw do
   get 'attachments/download/:id', :to => 'attachments#download', :id => /\d+/
   get 'attachments/thumbnail/:id(/:size)', :to => 'attachments#thumbnail', :id => /\d+/, :size => /\d+/, :as => 'thumbnail'
   resources :attachments, :only => [:show, :destroy]
+  get 'attachments/:object_type/:object_id/edit', :to => 'attachments#edit', :as => :object_attachments_edit
+  patch 'attachments/:object_type/:object_id', :to => 'attachments#update', :as => :object_attachments
 
   resources :groups do
+    resources :memberships, :controller => 'principal_memberships'
     member do
       get 'autocomplete_for_user'
     end
   end
 
-  match 'groups/:id/users', :controller => 'groups', :action => 'add_users', :id => /\d+/, :via => :post, :as => 'group_users'
-  match 'groups/:id/users/:user_id', :controller => 'groups', :action => 'remove_user', :id => /\d+/, :via => :delete, :as => 'group_user'
-  match 'groups/destroy_membership/:id', :controller => 'groups', :action => 'destroy_membership', :id => /\d+/, :via => :post
-  match 'groups/edit_membership/:id', :controller => 'groups', :action => 'edit_membership', :id => /\d+/, :via => :post
+  get 'groups/:id/users/new', :to => 'groups#new_users', :id => /\d+/, :as => 'new_group_users'
+  post 'groups/:id/users', :to => 'groups#add_users', :id => /\d+/, :as => 'group_users'
+  delete 'groups/:id/users/:user_id', :to => 'groups#remove_user', :id => /\d+/, :as => 'group_user'
 
   resources :trackers, :except => :show do
     collection do
@@ -327,7 +330,7 @@ RedmineApp::Application.routes.draw do
 
   match 'sys/projects', :to => 'sys#projects', :via => :get
   match 'sys/projects/:id/repository', :to => 'sys#create_project_repository', :via => :post
-  match 'sys/fetch_changesets', :to => 'sys#fetch_changesets', :via => :get
+  match 'sys/fetch_changesets', :to => 'sys#fetch_changesets', :via => [:get, :post]
 
   match 'uploads', :to => 'attachments#upload', :via => :post
 

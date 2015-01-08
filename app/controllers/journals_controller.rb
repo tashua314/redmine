@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2013  Jean-Philippe Lang
+# Copyright (C) 2006-2014  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -34,7 +34,6 @@ class JournalsController < ApplicationController
     retrieve_query
     sort_init 'id', 'desc'
     sort_update(@query.sortable_columns)
-
     if @query.valid?
       @journals = @query.journals(:order => "#{Journal.table_name}.created_on DESC",
                                   :limit => 25)
@@ -66,7 +65,7 @@ class JournalsController < ApplicationController
       text = @issue.description
     end
     # Replaces pre blocks with [...]
-    text = text.to_s.strip.gsub(%r{<pre>((.|\s)*?)</pre>}m, '[...]')
+    text = text.to_s.strip.gsub(%r{<pre>(.*?)</pre>}m, '[...]')
     @content = "#{ll(Setting.default_language, :text_user_wrote, user)}\n> "
     @content << text.gsub(/(\r?\n|\r\n?)/, "\n> ") + "\n\n"
   rescue ActiveRecord::RecordNotFound
@@ -85,10 +84,7 @@ class JournalsController < ApplicationController
       end
     else
       respond_to do |format|
-        format.html {
-          # TODO: implement non-JS journal update
-          render :nothing => true
-        }
+        # TODO: implement non-JS journal update
         format.js
       end
     end

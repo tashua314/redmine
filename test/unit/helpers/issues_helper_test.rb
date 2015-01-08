@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2013  Jean-Philippe Lang
+# Copyright (C) 2006-2014  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -18,10 +18,11 @@
 require File.expand_path('../../../test_helper', __FILE__)
 
 class IssuesHelperTest < ActionView::TestCase
-  include ApplicationHelper
+  include Redmine::I18n
   include IssuesHelper
   include CustomFieldsHelper
   include ERB::Util
+  include Rails.application.routes.url_helpers
 
   fixtures :projects, :trackers, :issue_statuses, :issues,
            :enumerations, :users, :issue_categories,
@@ -65,6 +66,16 @@ class IssuesHelperTest < ActionView::TestCase
     Issue.find(2).update_attribute :parent_issue_id, 1
     assert_equal l(:text_issues_destroy_confirmation),
                  issues_destroy_confirmation_message(Issue.find([1, 2]))
+  end
+
+  def test_issues_destroy_confirmation_message_with_issues_that_share_descendants
+    root = Issue.generate!
+    child = Issue.generate!(:parent_issue_id => root.id)
+    Issue.generate!(:parent_issue_id => child.id)
+
+    assert_equal l(:text_issues_destroy_confirmation) + "\n" +
+                   l(:text_issues_destroy_descendants_confirmation, :count => 1),
+                 issues_destroy_confirmation_message([root.reload, child.reload])
   end
 
   test 'show_detail with no_html should show a changing attribute' do
@@ -208,5 +219,67 @@ class IssuesHelperTest < ActionView::TestCase
     detail = JournalDetail.new(:property => 'attachment', :prop_key => '1',
                                :old_value => 'error281.txt', :value => nil)
     assert_match 'error281.txt', show_detail(detail, true)
+  end
+
+  def test_show_detail_relation_added
+    detail = JournalDetail.new(:property => 'relation',
+                               :prop_key => 'precedes',
+                               :value    => 1)
+    assert_equal "Precedes Bug #1: Cannot print recipes added", show_detail(detail, true)
+    str = link_to("Bug #1", "/issues/1", :class => Issue.find(1).css_classes)
+    assert_equal "<strong>Precedes</strong> <i>#{str}: Cannot print recipes</i> added",
+                  show_detail(detail, false)
+  end
+
+  def test_show_detail_relation_added_with_inexistant_issue
+    inexistant_issue_number = 9999
+    assert_nil  Issue.find_by_id(inexistant_issue_number)
+    detail = JournalDetail.new(:property => 'relation',
+                               :prop_key => 'precedes',
+                               :value    => inexistant_issue_number)
+    assert_equal "Precedes Issue ##{inexistant_issue_number} added", show_detail(detail, true)
+    assert_equal "<strong>Precedes</strong> <i>Issue ##{inexistant_issue_number}</i> added", show_detail(detail, false)
+  end
+
+  def test_show_detail_relation_added_should_not_disclose_issue_that_is_not_visible
+    issue = Issue.generate!(:is_private => true)
+    detail = JournalDetail.new(:property => 'relation',
+                               :prop_key => 'precedes',
+                               :value    => issue.id)
+
+    assert_equal "Precedes Issue ##{issue.id} added", show_detail(detail, true)
+    assert_equal "<strong>Precedes</strong> <i>Issue ##{issue.id}</i> added", show_detail(detail, false)
+  end
+
+  def test_show_detail_relation_deleted
+    detail = JournalDetail.new(:property  => 'relation',
+                               :prop_key  => 'precedes',
+                               :old_value => 1)
+    assert_equal "Precedes deleted (Bug #1: Cannot print recipes)", show_detail(detail, true)
+    str = link_to("Bug #1",
+                  "/issues/1",
+                  :class => Issue.find(1).css_classes)
+    assert_equal "<strong>Precedes</strong> deleted (<i>#{str}: Cannot print recipes</i>)",
+                 show_detail(detail, false)
+  end
+
+  def test_show_detail_relation_deleted_with_inexistant_issue
+    inexistant_issue_number = 9999
+    assert_nil  Issue.find_by_id(inexistant_issue_number)
+    detail = JournalDetail.new(:property  => 'relation',
+                               :prop_key  => 'precedes',
+                               :old_value => inexistant_issue_number)
+    assert_equal "Precedes deleted (Issue #9999)", show_detail(detail, true)
+    assert_equal "<strong>Precedes</strong> deleted (<i>Issue #9999</i>)", show_detail(detail, false)
+  end
+
+  def test_show_detail_relation_deleted_should_not_disclose_issue_that_is_not_visible
+    issue = Issue.generate!(:is_private => true)
+    detail = JournalDetail.new(:property => 'relation',
+                               :prop_key => 'precedes',
+                               :old_value    => issue.id)
+
+    assert_equal "Precedes deleted (Issue ##{issue.id})", show_detail(detail, true)
+    assert_equal "<strong>Precedes</strong> deleted (<i>Issue ##{issue.id}</i>)", show_detail(detail, false)
   end
 end

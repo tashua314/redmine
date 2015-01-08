@@ -21,7 +21,7 @@
         <% issues.each do |issue| -%>
           <tr class="hascontextmenu">
             <td class="checkbox"><%= check_box_tag 'ids[]', issue.id, false, :id => nil %></td>
-            <td><%= link_to_issue(issue, :project => (@project != issue.project)) %></td>
+            <td class="subject"><%= link_to_issue(issue, :project => (@project != issue.project)) %></td>
           </tr>
         <% end -%>
         </table>
@@ -56,7 +56,7 @@
   </li>
   <% if @project.descendants.active.any? %>
   <li>
-    <%= hidden_field_tag 'with_subprojects', 0 %>
+    <%= hidden_field_tag 'with_subprojects', 0, :id => nil %>
     <label>
       <%= check_box_tag 'with_subprojects', 1, @with_subprojects %> <%=l(:label_subproject_plural)%>
     </label>

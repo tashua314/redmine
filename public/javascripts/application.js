@@ -1,12 +1,8 @@
 /* Redmine - project management software
-   Copyright (C) 2006-2013  Jean-Philippe Lang */
+   Copyright (C) 2006-2014  Jean-Philippe Lang */
 
 function checkAll(id, checked) {
-  if (checked) {
-    $('#'+id).find('input[type=checkbox]').attr('checked', true);
-  } else {
-    $('#'+id).find('input[type=checkbox]').removeAttr('checked');
-  }
+  $('#'+id).find('input[type=checkbox]:enabled').prop('checked', checked);
 }
 
 function toggleCheckboxesBySelector(selector) {
@@ -14,7 +10,7 @@ function toggleCheckboxesBySelector(selector) {
   $(selector).each(function(index) {
     if (!$(this).is(':checked')) { all_checked = false; }
   });
-  $(selector).attr('checked', !all_checked);
+  $(selector).prop('checked', !all_checked);
 }
 
 function showAndScrollTo(id, focus) {
@@ -78,6 +74,31 @@ function hideFieldset(el) {
   fieldset.children('div').hide();
 }
 
+// columns selection
+function moveOptions(theSelFrom, theSelTo) {
+  $(theSelFrom).find('option:selected').detach().prop("selected", false).appendTo($(theSelTo));
+}
+
+function moveOptionUp(theSel) {
+  $(theSel).find('option:selected').each(function(){
+    $(this).prev(':not(:selected)').detach().insertAfter($(this));
+  });
+}
+
+function moveOptionTop(theSel) {
+  $(theSel).find('option:selected').detach().prependTo($(theSel));
+}
+
+function moveOptionDown(theSel) {
+  $($(theSel).find('option:selected').get().reverse()).each(function(){
+    $(this).next(':not(:selected)').detach().insertBefore($(this));
+  });
+}
+
+function moveOptionBottom(theSel) {
+  $(theSel).find('option:selected').detach().appendTo($(theSel));
+}
+
 function initFilters() {
   $('#add_filter_select').change(function() {
     addFilter($(this).val(), '', []);
@@ -85,14 +106,14 @@ function initFilters() {
   $('#filters-table td.field input[type=checkbox]').each(function() {
     toggleFilter($(this).val());
   });
-  $('#filters-table td.field input[type=checkbox]').live('click', function() {
+  $('#filters-table').on('click', 'td.field input[type=checkbox]', function() {
     toggleFilter($(this).val());
   });
-  $('#filters-table .toggle-multiselect').live('click', function() {
+  $('#filters-table').on('click', '.toggle-multiselect', function() {
     toggleMultiSelect($(this).siblings('select'));
   });
-  $('#filters-table input[type=text]').live('keypress', function(e) {
-    if (e.keyCode == 13) submit_query_form("query_form");
+  $('#filters-table').on('keypress', 'input[type=text]', function(e) {
+    if (e.keyCode == 13) $(this).closest('form').submit();
   });
 }
 
@@ -104,9 +125,9 @@ function addFilter(field, operator, values) {
   } else {
     buildFilterRow(field, operator, values);
   }
-  $('#cb_'+fieldId).attr('checked', true);
+  $('#cb_'+fieldId).prop('checked', true);
   toggleFilter(field);
-  $('#add_filter_select').val('').children('option').each(function() {
+  $('#add_filter_select').val('').find('option').each(function() {
     if ($(this).attr('value') == field) {
       $(this).attr('disabled', true);
     }
@@ -117,6 +138,7 @@ function buildFilterRow(field, operator, values) {
   var fieldId = field.replace('.', '_');
   var filterTable = $("#filters-table");
   var filterOptions = availableFilters[field];
+  if (!filterOptions) return;
   var operators = operatorByType[filterOptions['type']];
   var filterValues = filterOptions['values'];
   var i, select;
@@ -192,6 +214,7 @@ function buildFilterRow(field, operator, values) {
       if (values[0] == filterValue[1]) { option.attr('selected', true); }
       select.append(option);
     }
+    break;
   case "integer":
   case "float":
     tr.find('td.values').append(
@@ -280,14 +303,14 @@ function toggleOperator(field) {
 function toggleMultiSelect(el) {
   if (el.attr('multiple')) {
     el.removeAttr('multiple');
+    el.attr('size', 1);
   } else {
     el.attr('multiple', true);
+    if (el.children().length > 10)
+      el.attr('size', 10);
+    else
+      el.attr('size', 4);
   }
-}
-
-function submit_query_form(id) {
-  selectAllOptions("selected_columns");
-  $('#'+id).submit();
 }
 
 function showTab(name, url) {
@@ -411,7 +434,7 @@ function expandScmEntry(id) {
 }
 
 function scmEntryClick(id, url) {
-    el = $('#'+id);
+    var el = $('#'+id);
     if (el.hasClass('open')) {
         collapseScmEntry(id);
         el.addClass('collapsed');
@@ -444,13 +467,27 @@ function randomKey(size) {
   return key;
 }
 
-// Can't use Rails' remote select because we need the form data
 function updateIssueFrom(url) {
+  $('#all_attributes input, #all_attributes textarea, #all_attributes select').each(function(){
+    $(this).data('valuebeforeupdate', $(this).val());
+  });
   $.ajax({
     url: url,
     type: 'post',
     data: $('#issue-form').serialize()
   });
+}
+
+function replaceIssueFormWith(html){
+  var replacement = $(html);
+  $('#all_attributes input, #all_attributes textarea, #all_attributes select').each(function(){
+    var object_id = $(this).attr('id');
+    if (object_id && $(this).data('valuebeforeupdate')!=$(this).val()) {
+      replacement.find('#'+object_id).val($(this).val());
+    }
+  });
+  $('#all_attributes').empty();
+  $('#all_attributes').prepend(replacement);
 }
 
 function updateBulkEditFrom(url) {
@@ -503,18 +540,21 @@ function observeSearchfield(fieldId, targetId, url) {
   });
 }
 
-function observeProjectModules() {
-  var f = function() {
-    /* Hides trackers and issues custom fields on the new project form when issue_tracking module is disabled */
-    if ($('#project_enabled_module_names_issue_tracking').attr('checked')) {
-      $('#project_trackers').show();
-    } else {
-      $('#project_trackers').hide();
-    }
-  };
-
-  $(window).load(f);
-  $('#project_enabled_module_names_issue_tracking').change(f);
+function beforeShowDatePicker(input, inst) {
+  var default_date = null;
+  switch ($(input).attr("id")) {
+    case "issue_start_date" :
+      if ($("#issue_due_date").size() > 0) {
+        default_date = $("#issue_due_date").val();
+      }
+      break;
+    case "issue_due_date" :
+      if ($("#issue_start_date").size() > 0) {
+        default_date = $("#issue_start_date").val();
+      }
+      break;
+  }
+  $(input).datepicker("option", "defaultDate", default_date);
 }
 
 function initMyPageSortable(list, url) {
@@ -535,10 +575,10 @@ function initMyPageSortable(list, url) {
 var warnLeavingUnsavedMessage;
 function warnLeavingUnsaved(message) {
   warnLeavingUnsavedMessage = message;
-  $('form').submit(function(){
+  $(document).on('submit', 'form', function(){
     $('textarea').removeData('changed');
   });
-  $('textarea').change(function(){
+  $(document).on('change', 'textarea', function(){
     $(this).data('changed', 'changed');
   });
   window.onbeforeunload = function(){
@@ -553,12 +593,12 @@ function warnLeavingUnsaved(message) {
 }
 
 function setupAjaxIndicator() {
-  $('#ajax-indicator').bind('ajaxSend', function(event, xhr, settings) {
+  $(document).bind('ajaxSend', function(event, xhr, settings) {
     if ($('.ajax-loading').length === 0 && settings.contentType != 'application/octet-stream') {
       $('#ajax-indicator').show();
     }
   });
-  $('#ajax-indicator').bind('ajaxStop', function() {
+  $(document).bind('ajaxStop', function() {
     $('#ajax-indicator').hide();
   });
 }
@@ -581,11 +621,32 @@ function addFormObserversForDoubleSubmit() {
   });
 }
 
+function defaultFocus(){
+  if ($('#content :focus').length == 0) {
+    $('#content input[type=text], #content textarea').first().focus();
+  }
+}
+
 function blockEventPropagation(event) {
   event.stopPropagation();
   event.preventDefault();
 }
 
+function toggleDisabledOnChange() {
+  var checked = $(this).is(':checked');
+  $($(this).data('disables')).attr('disabled', checked);
+  $($(this).data('enables')).attr('disabled', !checked);
+}
+function toggleDisabledInit() {
+  $('input[data-disables], input[data-enables]').each(toggleDisabledOnChange);
+}
+$(document).ready(function(){
+  $('#content').on('change', 'input[data-disables], input[data-enables]', toggleDisabledOnChange);
+  toggleDisabledInit();
+});
+
 $(document).ready(setupAjaxIndicator);
 $(document).ready(hideOnLoad);
 $(document).ready(addFormObserversForDoubleSubmit);
+$(document).ready(defaultFocus);
+

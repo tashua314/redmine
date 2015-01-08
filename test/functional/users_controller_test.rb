@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2013  Jean-Philippe Lang
+# Copyright (C) 2006-2014  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -27,12 +27,6 @@ class UsersControllerTest < ActionController::TestCase
   def setup
     User.current = nil
     @request.session[:user_id] = 1 # admin
-  end
-
-  def test_index
-    get :index
-    assert_response :success
-    assert_template 'index'
   end
 
   def test_index
@@ -70,7 +64,7 @@ class UsersControllerTest < ActionController::TestCase
     assert users.any?
     assert_equal([], (users - Group.find(10).users))
     assert_select 'select[name=group_id]' do
-      assert_select 'option[value=10][selected=selected]'
+      assert_select 'option[value="10"][selected=selected]'
     end
   end
 
@@ -81,7 +75,7 @@ class UsersControllerTest < ActionController::TestCase
     assert_template 'show'
     assert_not_nil assigns(:user)
 
-    assert_tag 'li', :content => /Phone number/
+    assert_select 'li', :text => /Phone number/
   end
 
   def test_show_should_not_display_hidden_custom_fields
@@ -92,7 +86,7 @@ class UsersControllerTest < ActionController::TestCase
     assert_template 'show'
     assert_not_nil assigns(:user)
 
-    assert_no_tag 'li', :content => /Phone number/
+    assert_select 'li', :text => /Phone number/, :count => 0
   end
 
   def test_show_should_not_fail_when_custom_values_are_nil
@@ -112,17 +106,20 @@ class UsersControllerTest < ActionController::TestCase
     assert_response 404
   end
 
-  def test_show_should_not_reveal_users_with_no_visible_activity_or_project
-    @request.session[:user_id] = nil
-    get :show, :id => 9
-    assert_response 404
-  end
-
   def test_show_inactive_by_admin
     @request.session[:user_id] = 1
     get :show, :id => 5
     assert_response 200
     assert_not_nil assigns(:user)
+  end
+
+  def test_show_user_who_is_not_visible_should_return_404
+    Role.anonymous.update! :users_visibility => 'members_of_visible_projects'
+    user = User.generate!
+
+    @request.session[:user_id] = nil
+    get :show, :id => user.id
+    assert_response 404
   end
 
   def test_show_displays_memberships_based_on_project_visibility
@@ -175,7 +172,7 @@ class UsersControllerTest < ActionController::TestCase
       end
     end
 
-    user = User.first(:order => 'id DESC')
+    user = User.order('id DESC').first
     assert_redirected_to :controller => 'users', :action => 'edit', :id => user.id
 
     assert_equal 'John', user.firstname
@@ -210,7 +207,7 @@ class UsersControllerTest < ActionController::TestCase
           'warn_on_leaving_unsaved' => '0'
         }
     end
-    user = User.first(:order => 'id DESC')
+    user = User.order('id DESC').first
     assert_equal 'jdoe', user.login
     assert_equal true, user.pref.hide_mail
     assert_equal 'Paris', user.pref.time_zone
@@ -242,6 +239,17 @@ class UsersControllerTest < ActionController::TestCase
     assert user.check_password?(password)
   end
 
+  def test_create_and_continue
+    post :create, :user => {
+        :login => 'randompass',
+        :firstname => 'Random',
+        :lastname => 'Pass',
+        :mail => 'randompass@example.net',
+        :generate_password => '1'
+      }, :continue => '1'
+    assert_redirected_to '/users/new?user%5Bgenerate_password%5D=1'
+  end
+
   def test_create_with_failure
     assert_no_difference 'User.count' do
       post :create, :user => {}
@@ -250,11 +258,38 @@ class UsersControllerTest < ActionController::TestCase
     assert_template 'new'
   end
 
+  def test_create_with_failure_sould_preserve_preference
+    assert_no_difference 'User.count' do
+      post :create,
+        :user => {},
+        :pref => {
+          'no_self_notified' => '1',
+          'hide_mail' => '1',
+          'time_zone' => 'Paris',
+          'comments_sorting' => 'desc',
+          'warn_on_leaving_unsaved' => '0'
+        }
+    end
+    assert_response :success
+    assert_template 'new'
+
+    assert_select 'select#pref_time_zone option[selected=selected]', :text => /Paris/
+    assert_select 'input#pref_no_self_notified[value="1"][checked=checked]'
+  end
+
   def test_edit
     get :edit, :id => 2
     assert_response :success
     assert_template 'edit'
     assert_equal User.find(2), assigns(:user)
+  end
+
+  def test_edit_registered_user
+    assert User.find(2).register!
+
+    get :edit, :id => 2
+    assert_response :success
+    assert_select 'a', :text => 'Activate'
   end
 
   def test_update
@@ -364,20 +399,28 @@ class UsersControllerTest < ActionController::TestCase
     u = User.find(2)
     assert_equal [1, 2, 5], u.projects.collect{|p| p.id}.sort
     assert_equal [1, 2, 5], u.notified_projects_ids.sort
-    assert_tag :tag => 'input',
-               :attributes => {
-                  :id    => 'notified_project_ids_',
-                  :value => 1,
-                }
+    assert_select 'input[name=?][value=?]', 'user[notified_project_ids][]', '1'
     assert_equal 'all', u.mail_notification
     put :update, :id => 2,
         :user => {
-           :mail_notification => 'selected',
-         },
-        :notified_project_ids => [1, 2]
+          :mail_notification => 'selected',
+          :notified_project_ids => [1, 2]
+        }
     u = User.find(2)
     assert_equal 'selected', u.mail_notification
     assert_equal [1, 2], u.notified_projects_ids.sort
+  end
+
+  def test_update_status_should_not_update_attributes
+    user = User.find(2)
+    user.pref[:no_self_notified] = '1'
+    user.pref.save
+
+    put :update, :id => 2, :user => {:status => 3}
+    assert_response 302
+    user = User.find(2)
+    assert_equal 3, user.status
+    assert_equal '1', user.pref[:no_self_notified]
   end
 
   def test_destroy
@@ -402,79 +445,5 @@ class UsersControllerTest < ActionController::TestCase
       delete :destroy, :id => 2, :back_url => '/users?name=foo'
     end
     assert_redirected_to '/users?name=foo'
-  end
-
-  def test_create_membership
-    assert_difference 'Member.count' do
-      post :edit_membership, :id => 7, :membership => { :project_id => 3, :role_ids => [2]}
-    end
-    assert_redirected_to :action => 'edit', :id => '7', :tab => 'memberships'
-    member = Member.first(:order => 'id DESC')
-    assert_equal User.find(7), member.principal
-    assert_equal [2], member.role_ids
-    assert_equal 3, member.project_id
-  end
-
-  def test_create_membership_js_format
-    assert_difference 'Member.count' do
-      post :edit_membership, :id => 7, :membership => {:project_id => 3, :role_ids => [2]}, :format => 'js'
-      assert_response :success
-      assert_template 'edit_membership'
-      assert_equal 'text/javascript', response.content_type
-    end
-    member = Member.first(:order => 'id DESC')
-    assert_equal User.find(7), member.principal
-    assert_equal [2], member.role_ids
-    assert_equal 3, member.project_id
-    assert_include 'tab-content-memberships', response.body
-  end
-
-  def test_create_membership_js_format_with_failure
-    assert_no_difference 'Member.count' do
-      post :edit_membership, :id => 7, :membership => {:project_id => 3}, :format => 'js'
-      assert_response :success
-      assert_template 'edit_membership'
-      assert_equal 'text/javascript', response.content_type
-    end
-    assert_include 'alert', response.body, "Alert message not sent"
-    assert_include 'Role can\\\'t be empty', response.body, "Error message not sent"
-  end
-
-  def test_update_membership
-    assert_no_difference 'Member.count' do
-      put :edit_membership, :id => 2, :membership_id => 1, :membership => { :role_ids => [2]}
-      assert_redirected_to :action => 'edit', :id => '2', :tab => 'memberships'
-    end
-    assert_equal [2], Member.find(1).role_ids
-  end
-
-  def test_update_membership_js_format
-    assert_no_difference 'Member.count' do
-      put :edit_membership, :id => 2, :membership_id => 1, :membership => {:role_ids => [2]}, :format => 'js'
-      assert_response :success
-      assert_template 'edit_membership'
-      assert_equal 'text/javascript', response.content_type
-    end
-    assert_equal [2], Member.find(1).role_ids
-    assert_include 'tab-content-memberships', response.body
-  end
-
-  def test_destroy_membership
-    assert_difference 'Member.count', -1 do
-      delete :destroy_membership, :id => 2, :membership_id => 1
-    end
-    assert_redirected_to :action => 'edit', :id => '2', :tab => 'memberships'
-    assert_nil Member.find_by_id(1)
-  end
-
-  def test_destroy_membership_js_format
-    assert_difference 'Member.count', -1 do
-      delete :destroy_membership, :id => 2, :membership_id => 1, :format => 'js'
-      assert_response :success
-      assert_template 'destroy_membership'
-      assert_equal 'text/javascript', response.content_type
-    end
-    assert_nil Member.find_by_id(1)
-    assert_include 'tab-content-memberships', response.body
   end
 end

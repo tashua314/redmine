@@ -54,42 +54,46 @@ module ActionView
   end
 end
 
-# Do not HTML escape text templates
+ActionView::Base.field_error_proc = Proc.new{ |html_tag, instance| html_tag || ''.html_safe }
+
+# HTML5: <option value=""></option> is invalid, use <option value="">&nbsp;</option> instead
 module ActionView
-  class Template
-    module Handlers
-      class ERB
-        def call(template)
-          if template.source.encoding_aware?
-            # First, convert to BINARY, so in case the encoding is
-            # wrong, we can still find an encoding tag
-            # (<%# encoding %>) inside the String using a regular
-            # expression
-            template_source = template.source.dup.force_encoding("BINARY")
-
-            erb = template_source.gsub(ENCODING_TAG, '')
-            encoding = $2
-
-            erb.force_encoding valid_encoding(template.source.dup, encoding)
-
-            # Always make sure we return a String in the default_internal
-            erb.encode!
-          else
-            erb = template.source.dup
+  module Helpers
+    module Tags
+      class Base
+        private
+        def add_options_with_non_empty_blank_option(option_tags, options, value = nil)
+          if options[:include_blank] == true
+            options = options.dup
+            options[:include_blank] = '&nbsp;'.html_safe
           end
-
-          self.class.erb_implementation.new(
-            erb,
-            :trim => (self.class.erb_trim_mode == "-"),
-            :escape => template.identifier =~ /\.text/ # only escape HTML templates
-          ).src
+          add_options_without_non_empty_blank_option(option_tags, options, value)
         end
+        alias_method_chain :add_options, :non_empty_blank_option
       end
+    end
+
+    module FormTagHelper
+      def select_tag_with_non_empty_blank_option(name, option_tags = nil, options = {})
+        if options.delete(:include_blank)
+          options[:prompt] = '&nbsp;'.html_safe
+        end
+        select_tag_without_non_empty_blank_option(name, option_tags, options)
+      end
+      alias_method_chain :select_tag, :non_empty_blank_option
+    end
+
+    module FormOptionsHelper
+      def options_for_select_with_non_empty_blank_option(container, selected = nil)
+        if container.is_a?(Array)
+          container = container.map {|element| element.blank? ? ["&nbsp;".html_safe, ""] : element}
+        end
+        options_for_select_without_non_empty_blank_option(container, selected)
+      end
+      alias_method_chain :options_for_select, :non_empty_blank_option
     end
   end
 end
-
-ActionView::Base.field_error_proc = Proc.new{ |html_tag, instance| html_tag || ''.html_safe }
 
 require 'mail'
 
@@ -162,6 +166,30 @@ module ActionController
       $stderr.puts "Please remove config/initializers/session_store.rb and run `rake generate_secret_token`.\n" +
         "Setting the session secret with ActionController.session= is no longer supported in Rails 3."
       exit 1
+    end
+  end
+end
+
+if Rails::VERSION::MAJOR < 4 && RUBY_VERSION >= "2.1"
+  module ActiveSupport
+    class HashWithIndifferentAccess
+      def select(*args, &block)
+        dup.tap { |hash| hash.select!(*args, &block) }
+      end
+
+      def reject(*args, &block)
+        dup.tap { |hash| hash.reject!(*args, &block) }
+      end
+    end
+
+    class OrderedHash
+      def select(*args, &block)
+        dup.tap { |hash| hash.select!(*args, &block) }
+      end
+
+      def reject(*args, &block)
+        dup.tap { |hash| hash.reject!(*args, &block) }
+      end
     end
   end
 end

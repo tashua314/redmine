@@ -1,4 +1,4 @@
-<h2><%=l(:label_issue_new)%></h2>
+<%= title l(:label_issue_new) %>
 
 <%= call_hook(:view_issues_new_top, {:issue => @issue}) %>
 
@@ -11,6 +11,12 @@
     <%= render :partial => 'issues/form', :locals => {:f => f} %>
     </div>
 
+    <% if @copy_from && Setting.link_copied_issue == 'ask' %>
+    <p>
+      <label for="link_copy"><%= l(:label_link_copied_issue) %></label>
+      <%= check_box_tag 'link_copy', '1', @link_copy %>
+    </p>
+    <% end %>
     <% if @copy_from && @copy_from.attachments.any? %>
     <p>
       <label for="copy_attachments"><%= l(:label_copy_attachments) %></label>
@@ -44,8 +50,6 @@
   <%= submit_tag l(:button_create) %>
   <%= submit_tag l(:button_create_and_continue), :name => 'continue' %>
   <%= preview_link preview_new_issue_path(:project_id => @project), 'issue-form' %>
-
-  <%= javascript_tag "$('#issue_subject').focus();" %>
 <% end %>
 
 <div id="preview" class="wiki"></div>

@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2013  Jean-Philippe Lang
+# Copyright (C) 2006-2014  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -21,10 +21,6 @@ class Redmine::ApiTest::WikiPagesTest < Redmine::ApiTest::Base
   fixtures :projects, :users, :roles, :members, :member_roles,
            :enabled_modules, :wikis, :wiki_pages, :wiki_contents,
            :wiki_content_versions, :attachments
-
-  def setup
-    Setting.rest_api_enabled = '1'
-  end
 
   test "GET /projects/:project_id/wiki/index.xml should return wiki pages" do
     get '/projects/ecookbook/wiki/index.xml'
@@ -90,6 +86,7 @@ class Redmine::ApiTest::WikiPagesTest < Redmine::ApiTest::Base
       assert_select 'version', :text => '2'
       assert_select 'text'
       assert_select 'author'
+      assert_select 'comments', :text => 'Small update'
       assert_select 'created_on'
       assert_select 'updated_on'
     end
